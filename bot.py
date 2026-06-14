@@ -2,10 +2,13 @@ import discord
 from discord.ext import commands, tasks
 import aiosqlite
 import time
-
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import threading
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# =========================
+# RENDER WEB SERVER FIX
+# =========================
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -16,10 +19,18 @@ def run_web():
             self.end_headers()
             self.wfile.write(b"Bot is running")
 
+        def do_HEAD(self):
+            self.send_response(200)
+            self.end_headers()
+
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
 
-threading.Thread(target=run_web).start()
+threading.Thread(target=run_web, daemon=True).start()
+
+# =========================
+# DISCORD BOT
+# =========================
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -30,10 +41,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 DB_PATH = "activity.db"
 
-
 # =========================
 # DATABASE INIT
 # =========================
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -44,10 +55,10 @@ async def init_db():
         """)
         await db.commit()
 
+# =========================
+# DB FUNCTIONS
+# =========================
 
-# =========================
-# SAFE UPDATE (FIX IMPORTANTE)
-# =========================
 async def set_activity(user_id: int, timestamp: float):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -72,29 +83,23 @@ async def get_activity(user_id: int):
             row = await cur.fetchone()
             return row[0] if row else None
 
+# =========================
+# EVENTS
+# =========================
 
-# =========================
-# START BOT
-# =========================
 @bot.event
 async def on_ready():
     await init_db()
     backup_scan.start()
-    print(f"Connesso come {bot.user}")
+    print(f"✅ Connecté en tant que {bot.user}")
 
-
-# =========================
-# LIVE TRACKING
-# =========================
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
     await set_activity(message.author.id, time.time())
-
     await bot.process_commands(message)
-
 
 @bot.event
 async def on_reaction_add(reaction, user):
@@ -103,10 +108,10 @@ async def on_reaction_add(reaction, user):
 
     await set_activity(user.id, time.time())
 
+# =========================
+# BACKUP SCAN
+# =========================
 
-# =========================
-# BACKUP AUTOMATICO (FIX ERRORI)
-# =========================
 @tasks.loop(minutes=30)
 async def backup_scan():
     for guild in bot.guilds:
@@ -115,20 +120,18 @@ async def backup_scan():
                 async for msg in channel.history(limit=50):
                     if msg.author.bot:
                         continue
-
                     await set_activity(msg.author.id, msg.created_at.timestamp())
-
             except:
                 continue
 
+# =========================
+# COMMAND: RESCAN
+# =========================
 
-# =========================
-# SCAN MANUALE
-# =========================
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def rescan(ctx):
-    await ctx.send("🔄 Scan in corso...")
+    await ctx.send("🔄 Scan en cours...")
 
     count = 0
 
@@ -137,22 +140,21 @@ async def rescan(ctx):
             async for msg in channel.history(limit=None):
                 if msg.author.bot:
                     continue
-
                 await set_activity(msg.author.id, msg.created_at.timestamp())
                 count += 1
-
         except:
             continue
 
-    await ctx.send(f"✅ Scan completato: {count} messaggi")
-
+    await ctx.send(f"✅ Scan terminé : {count} messages")
 
 # =========================
-# DASHBOARD
+# COMMAND: ANALYSE
 # =========================
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def analisi(ctx, giorni: int = 30):
+
     threshold = time.time() - (giorni * 86400)
 
     attivi = []
@@ -175,64 +177,45 @@ async def analisi(ctx, giorni: int = 30):
         else:
             inattivi.append((member.display_name, diff_days))
 
-
     attivi.sort(key=lambda x: x[1])
     inattivi.sort(key=lambda x: (999999 if x[1] == "Mai attivo" else x[1]), reverse=True)
 
-
     embed = discord.Embed(
-        title="📊 Analisi attività server",
-        description=f"Ultimi {giorni} giorni",
+        title="📊 Analyse activité serveur",
+        description=f"Derniers {giorni} jours",
         color=discord.Color.blurple()
     )
 
-    # 🟢 ATTIVI
-    attivi_text = ""
-    for name, d in attivi[:15]:
-        attivi_text += f"🟢 {name} — {d} giorni fa\n"
+    attivi_text = "\n".join(
+        f"🟢 {name} — {d} jours"
+        for name, d in attivi[:15]
+    ) or "Aucun membre actif"
 
-    if not attivi_text:
-        attivi_text = "Nessun membro attivo"
+    inattivi_text = "\n".join(
+        f"🔴 {name} — {d if d != 'Mai attivo' else 'Jamais actif'}"
+        for name, d in inattivi[:15]
+    ) or "Aucun membre inactif"
 
-    embed.add_field(
-        name="🟢 Membri attivi",
-        value=attivi_text,
-        inline=False
-    )
-
-    # 🔴 INATTIVI
-    inattivi_text = ""
-    for name, d in inattivi[:15]:
-        if d == "Mai attivo":
-            inattivi_text += f"🔴 {name} — Mai attivo\n"
-        else:
-            inattivi_text += f"🔴 {name} — {d} giorni fa\n"
-
-    if not inattivi_text:
-        inattivi_text = "Nessun membro inattivo"
+    embed.add_field(name="🟢 Actifs", value=attivi_text, inline=False)
+    embed.add_field(name="🔴 Inactifs", value=inattivi_text, inline=False)
 
     embed.add_field(
-        name="🔴 Membri inattivi",
-        value=inattivi_text,
+        name="📈 Stats",
+        value=f"🟢 {len(attivi)} actifs\n🔴 {len(inattivi)} inactifs",
         inline=False
     )
-
-    embed.add_field(
-        name="📈 Statistiche",
-        value=f"""🟢 Attivi: {len(attivi)}
-🔴 Inattivi: {len(inattivi)}
-📊 Totale: {len(attivi) + len(inattivi)}""",
-        inline=False
-    )
-
-    embed.set_footer(text="Sistema stabile: messaggi + reazioni + backup anti-errori")
 
     await ctx.send(embed=embed)
 
-
 # =========================
-# RUN
+# AUTO RESTART (ANTI CRASH)
 # =========================
 
-import os
-bot.run(os.getenv("TOKEN"))
+TOKEN = os.getenv("TOKEN")
+
+while True:
+    try:
+        bot.run(TOKEN)
+    except Exception as e:
+        print("❌ Crash bot → restart dans 5 sec :", e)
+        time.sleep(5)
