@@ -204,7 +204,7 @@ async def analisi(ctx, giorni: int = 30):
     # 📊 STATISTICHE FIXES (comme demandé)
     embed.add_field(
         name="📈 Statistiche",
-        value=f"🟢 Attivi: {len(attivi)}\n🔴 Inattivi: {len(inattivi)}"
+        value=f"🟢 Attivi: {len(attivi)}\n🔴 Inattivi: {len(inattivi)}",
         inline=False
     )
 
